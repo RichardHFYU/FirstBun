@@ -1,28 +1,35 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { db } from './db'
-import { agents, agentSales, events } from './schema'
+import { db } from './shared/config/database'
+import { agents, agentSales, events } from './shared/db/schema'
 import { eq } from 'drizzle-orm'
-import { template, eventsList, editEventForm } from './html'
+import { template, eventsList, editEventForm } from './shared/views/templates'
+import { HTTP_STATUS } from './shared/constants'
+import { logger } from './shared/utils/logger'
+import { errorHandler } from './shared/utils/error-handler'
 
 const app = new Hono()
 
 app.use('/*', cors())
 
+// Home route
 app.get('/', (c) => {
   return c.html(template())
 })
 
-app.get('/api/agents', async (c) => {
+// Agent routes
+const agentRoutes = new Hono()
+agentRoutes.get('/agents', async (c) => {
   try {
     const data = await db.select().from(agents).execute()
     return c.json(data)
   } catch (error) {
-    return c.json({ error: 'Failed to fetch agents' }, 500)
+    logger.error('Failed to fetch agents', error)
+    return c.json({ error: 'Failed to fetch agents' }, HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-app.get('/api/agents/:id', async (c) => {
+agentRoutes.get('/agents/:id', async (c) => {
   try {
     const id = c.req.param('id')
     const result = await db
@@ -32,15 +39,16 @@ app.get('/api/agents/:id', async (c) => {
       .execute()
     
     if (!result.length) {
-      return c.json({ error: 'Agent not found' }, 404)
+      return c.json({ error: 'Agent not found' }, HTTP_STATUS.NOT_FOUND)
     }
     return c.json(result[0])
   } catch (error) {
-    return c.json({ error: 'Failed to fetch agent' }, 500)
+    logger.error('Failed to fetch agent', error)
+    return c.json({ error: 'Failed to fetch agent' }, HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-app.get('/api/agents/:id/sales', async (c) => {
+agentRoutes.get('/agents/:id/sales', async (c) => {
   try {
     const id = c.req.param('id')
     const sales = await db
@@ -50,54 +58,39 @@ app.get('/api/agents/:id/sales', async (c) => {
       .execute()
     return c.json(sales)
   } catch (error) {
-    return c.json({ error: 'Failed to fetch agent sales' }, 500)
+    logger.error('Failed to fetch agent sales', error)
+    return c.json({ error: 'Failed to fetch agent sales' }, HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-// HTMX Event Routes
-app.get('/events', async (c) => {
+// Event routes
+const eventRoutes = new Hono()
+
+eventRoutes.get('/events', async (c) => {
   try {
     const allEvents = await db.select().from(events).execute()
     return c.html(eventsList(allEvents))
   } catch (error) {
-    return c.text('Failed to load events', 500)
+    logger.error('Failed to load events', error)
+    return c.text('Failed to load events', HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-app.post('/events', async (c) => {
+eventRoutes.post('/events', async (c) => {
   try {
     const body = await c.req.json()
     const [newEvent] = await db.insert(events)
       .values(body)
       .returning()
     
-    return c.html(`
-      <div class="event-item" id="event-${newEvent.id}">
-        <h3>${newEvent.title}</h3>
-        <p>${newEvent.date}</p>
-        <button 
-          hx-delete="/events/${newEvent.id}"
-          hx-target="#event-${newEvent.id}"
-          hx-swap="outerHTML"
-          hx-confirm="Are you sure you want to delete this event?"
-        >
-          Delete
-        </button>
-        <button
-          hx-get="/events/${newEvent.id}/edit"
-          hx-target="#event-${newEvent.id}"
-          hx-swap="outerHTML"
-        >
-          Edit
-        </button>
-      </div>
-    `)
+    return c.html(eventsList([newEvent]))
   } catch (error) {
-    return c.text('Failed to create event', 500)
+    logger.error('Failed to create event', error)
+    return c.text('Failed to create event', HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-app.get('/events/:id/edit', async (c) => {
+eventRoutes.get('/events/:id/edit', async (c) => {
   try {
     const id = c.req.param('id')
     const [event] = await db
@@ -106,13 +99,18 @@ app.get('/events/:id/edit', async (c) => {
       .where(eq(events.id, id))
       .execute()
     
+    if (!event) {
+      return c.text('Event not found', HTTP_STATUS.NOT_FOUND)
+    }
+    
     return c.html(editEventForm(event))
   } catch (error) {
-    return c.text('Failed to load event', 500)
+    logger.error('Failed to load event', error)
+    return c.text('Failed to load event', HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-app.put('/events/:id', async (c) => {
+eventRoutes.put('/events/:id', async (c) => {
   try {
     const id = c.req.param('id')
     const body = await c.req.json()
@@ -123,41 +121,27 @@ app.put('/events/:id', async (c) => {
       .where(eq(events.id, id))
       .returning()
     
-    return c.html(`
-      <div class="event-item" id="event-${event.id}">
-        <h3>${event.title}</h3>
-        <p>${event.date}</p>
-        <button 
-          hx-delete="/events/${event.id}"
-          hx-target="#event-${event.id}"
-          hx-swap="outerHTML"
-          hx-confirm="Are you sure you want to delete this event?"
-        >
-          Delete
-        </button>
-        <button
-          hx-get="/events/${event.id}/edit"
-          hx-target="#event-${event.id}"
-          hx-swap="outerHTML"
-        >
-          Edit
-        </button>
-      </div>
-    `)
+    return c.html(eventsList([event]))
   } catch (error) {
-    return c.text('Failed to update event', 500)
+    logger.error('Failed to update event', error)
+    return c.text('Failed to update event', HTTP_STATUS.SERVER_ERROR)
   }
 })
 
-app.delete('/events/:id', async (c) => {
+eventRoutes.delete('/events/:id', async (c) => {
   try {
     const id = c.req.param('id')
     await db.delete(events).where(eq(events.id, id))
     return c.text('') // HTMX will remove the element
   } catch (error) {
-    return c.text('Failed to delete event', 500)
+    logger.error('Failed to delete event', error)
+    return c.text('Failed to delete event', HTTP_STATUS.SERVER_ERROR)
   }
 })
+
+// Mount routes with versioning
+app.route('/api/v1', agentRoutes)
+app.route('/api/v1', eventRoutes)
 
 export default {
   port: 3000,
