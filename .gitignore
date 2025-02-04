@@ -1,0 +1,39 @@
+# Node.js / Bun dependency directories (if used)
+node_modules/
+.pnpm-store/
+.yarn/
+.bun/
+
+# Build output directories
+dist/
+build/
+
+# Logs and runtime files
+*.log
+npm-debug.log*
+yarn-debug.log*
+bun-debug.log*
+
+# Temp files and directories
+tmp/
+temp/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Environment variable files (you may wish to keep local env files out of version control)
+.env
+.env.local
+.env.*.local
+
+# Editor / IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Other
+coverage/
